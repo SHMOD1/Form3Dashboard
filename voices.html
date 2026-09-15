@@ -104,14 +104,56 @@ const COLORS = { 'yes-color':'#e05252', 'no-color':'#4caf50', 'unknown-color':'#
 
 let interviews = [];
 
+async function loadCsvRows(path){
+  const text = await fetch(path).then(r => r.text());
+  return Papa.parse(text, { header: true, skipEmptyLines: true }).data.slice(1);
+}
+
+function normDrain(v){ return v ? String(v).trim().toUpperCase() : null; }
+function pct(n, d){ return d > 0 ? Math.round((n / d) * 100) : null; }
+const WALL_GOOD = v => /intact/i.test(v || '');
+const WATER_BAD = v => /black|grey|solid particles|oily|froth|foam/i.test(v || '');
+
+let seeByDrain = {};
+
+async function buildSeeByDrain(){
+  const [f1, f2] = await Promise.all([loadCsvRows('data/csv/form-1.csv'), loadCsvRows('data/csv/form-2.csv')]);
+  const f2ByIndex = new Map(f2.map(r => [r._index_f1, r]));
+  const see = {};
+  for (const r of f1) {
+    const drain = normDrain(r._drain);
+    if (!drain) continue;
+    const f2row = f2ByIndex.get(r._index) || {};
+    const s = see[drain] || (see[drain] = {
+      wallCounts: {}, waterCounts: {}, wasteYes: 0, wasteNo: 0, wasteCannotSee: 0, total: 0,
+    });
+    s.total++;
+    if (r.wall_condition) {
+      const label = WALL_GOOD(r.wall_condition) ? 'Intact' : /does not exist|no retaining wall/i.test(r.wall_condition) ? 'Does not exist' : 'Broken';
+      s.wallCounts[label] = (s.wallCounts[label] || 0) + 1;
+    }
+    if (f2row.water_contamination) {
+      const label = WATER_BAD(f2row.water_contamination) ? 'Contaminated' : /cannot see/i.test(f2row.water_contamination) ? 'Cannot see' : 'Clear';
+      s.waterCounts[label] = (s.waterCounts[label] || 0) + 1;
+    }
+    const swi = (f2row.sw_inside || '').trim().toLowerCase();
+    if (swi === 'yes') s.wasteYes++;
+    else if (swi === 'no') s.wasteNo++;
+    else if (swi === 'cannot see') s.wasteCannotSee++;
+  }
+  return see;
+}
+
 async function main(){
-  const [text, primary, secondary, gbaBoundary, valley] = await Promise.all([
+  const [text, primary, secondary, gbaBoundary, valley, see] = await Promise.all([
     fetch('data/csv/form-3.csv').then(r => r.text()),
     fetch('data/json/primarydrains.geojson').then(r => r.json()),
     fetch('data/json/secondarydrains.geojson').then(r => r.json()),
     fetch('data/json/gba_boundary.geojson').then(r => r.json()),
     fetch('data/json/valley.geojson').then(r => r.json()),
+    buildSeeByDrain(),
   ]);
+  seeByDrain = see;
   const rows = Papa.parse(text, { header: false, skipEmptyLines: true }).data.slice(2);
 
   interviews = rows.filter(r => {
@@ -197,6 +239,45 @@ function activityTags(str){
     .map(t => `<span class="activities-tag">${t}</span>`).join('');
 }
 
+function breakdownBars(counts, total, colorMap){
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '<div style="font-size:12px;color:#999;font-style:italic;">No data</div>';
+  return entries.map(([label, n]) => {
+    const p = pct(n, total);
+    const color = colorMap[label] || '#999';
+    return `
+      <div class="bar-row" style="display:flex;align-items:center;gap:8px;font-size:11.5px;margin:4px 0;">
+        <span style="width:88px;flex-shrink:0;">${label}</span>
+        <div style="flex:1;background:#eee;border-radius:3px;height:8px;overflow:hidden;">
+          <div style="height:100%;width:${p}%;background:${color};border-radius:3px;"></div>
+        </div>
+        <span style="width:34px;text-align:right;color:#777;flex-shrink:0;">${p}%</span>
+      </div>`;
+  }).join('');
+}
+
+const WALL_COLORS = { 'Intact':'#4caf50', 'Broken':'#ffb300', 'Does not exist':'#ef5350' };
+const WATER_COLORS = { 'Clear':'#b3e5fc', 'Contaminated':'#546e7a', 'Cannot see':'#b6b6b6' };
+const WASTE_COLORS = { 'Yes':'#ef5350', 'No':'#4caf50', 'Cannot see':'#b6b6b6' };
+
+function seeSectionHtml(drain){
+  const s = seeByDrain[normDrain(drain)];
+  if (!s) {
+    return `<div class="sec-title">Physical Audit (Form 1 &amp; 2)</div>
+      <div style="font-size:12px;color:#999;font-style:italic;">No physical audit points recorded for this drain.</div>`;
+  }
+  const wasteCounts = { 'Yes': s.wasteYes, 'No': s.wasteNo, 'Cannot see': s.wasteCannotSee };
+  return `
+    <div class="sec-title">Physical Audit (Form 1 &amp; 2) — ${s.total} points on this drain</div>
+    <div style="font-size:11px;font-weight:600;color:#888;margin:8px 0 2px;">Wall condition</div>
+    ${breakdownBars(s.wallCounts, s.total, WALL_COLORS)}
+    <div style="font-size:11px;font-weight:600;color:#888;margin:10px 0 2px;">Water contamination</div>
+    ${breakdownBars(s.waterCounts, s.total, WATER_COLORS)}
+    <div style="font-size:11px;font-weight:600;color:#888;margin:10px 0 2px;">Solid waste inside</div>
+    ${breakdownBars(wasteCounts, s.total, WASTE_COLORS)}
+  `;
+}
+
 function openPanel(iv){
   const floodLine = iv.floodHistory
     ? `${iv.floodHistory}${iv.floodHeight ? ' — ' + iv.floodHeight : ''}${iv.lastFlooded ? ' (last: ' + iv.lastFlooded + ')' : ''}`
@@ -205,6 +286,8 @@ function openPanel(iv){
   document.getElementById('panel-content').innerHTML = `
     <h2>${iv.name}</h2>
     <div class="sub">Drain ${iv.drain || '—'} · Lived here ${iv.livedYears || '—'} years</div>
+
+    ${seeSectionHtml(iv.drain)}
 
     <div class="sec-title">Flooding</div>
     <div class="stat-line"><span>History</span><span class="v">${floodLine}</span></div>
