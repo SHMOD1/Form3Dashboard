@@ -951,7 +951,7 @@ window.addEventListener('load', () => {
 function buildImgSrc(filename, _rootUuid, formNum) {
     if (!filename || !_rootUuid) return null;
     const cleanUuid = _rootUuid.replace('uuid:', '');
-    return `https://pub-4d67c97c1d2843adbeffa3b98cd45d19.r2.dev/form-${formNum}/images/${cleanUuid}/${filename}`;
+    return `https://pub-1f4352e1c46a4c7595cb251a346eadd4.r2.dev/form-${formNum}/images/${cleanUuid}/${filename}`;
     //return `data/media/form-${formNum}/images/${uuid.replace('uuid:', '')}/${filename}`;
 }
 
