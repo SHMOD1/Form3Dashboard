@@ -28,8 +28,6 @@
     border-top:1px solid #f0f0f0;font-size:12px;}
   .priority-item:hover{background:#f5f8ff;}
   .priority-item .p-drain{font-weight:700;width:44px;flex-shrink:0;color:var(--primary-blue);}
-  .priority-item .p-type{flex:1;font-size:10.5px;color:#666;}
-  .priority-item .p-score{font-weight:700;font-size:11px;flex-shrink:0;}
   .typology-badge{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;
     border-radius:10px;color:#fff;margin-bottom:8px;}
 
@@ -73,7 +71,7 @@
      background:rgba(255,255,255,0.97);border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.12);
      z-index:5;overflow:hidden;">
   <h2 style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:#888;padding:10px 12px 6px;">
-    Candidate Projects (ranked)</h2>
+    Candidate Projects by Category</h2>
   <div id="priority-items"></div>
 </div>
 
@@ -193,9 +191,9 @@ function buildSayByDrain(allRows){
 }
 
 let sayByDrain = {};
-let priorities = [];
+let categorized = []; // [{drain, category, rationale, physicalPoints, interviews}]
 
-function computePriority(drain){
+function computeCategory(drain){
   const s = seeByDrain[drain], y = sayByDrain[drain];
   if (!s || !y) return null;
 
@@ -203,48 +201,41 @@ function computePriority(drain){
   const waterBadPct = pct(s.waterCounts['Contaminated']||0, s.total);
   const wastePct = pct(s.wasteYes, s.total);
   const treesPct = pct(s.treesYes, s.treesTotal);
-
-  const severity = Math.round(([wallBadPct, waterBadPct, wastePct].filter(v => v != null)
-    .reduce((a,b)=>a+b,0)) / [wallBadPct, waterBadPct, wastePct].filter(v => v != null).length || 0);
   const floodPct = pct(y.floodYes, y.floodTotal);
   const healthPct = pct(y.healthYes, y.healthTotal);
-  const communityImpact = Math.round(([floodPct, healthPct].filter(v => v != null)
-    .reduce((a,b)=>a+b,0)) / [floodPct, healthPct].filter(v => v != null).length || 0);
   const governanceClarity = pct(y.maintKnown, y.maintTotal);
 
-  // Typology: pick the single most actionable label for this drain
-  let typology, rationale;
+  // Category: which single named condition is actually true for this drain,
+  // checked in this order. No blending into a score — a drain either meets
+  // a condition or it doesn't.
+  let category, rationale;
   const wallDominant = wallBadPct != null && wallBadPct >= 40;
   const waterWasteDominant = (waterBadPct != null && waterBadPct >= 60) || (wastePct != null && wastePct >= 60);
   const floodDominant = floodPct != null && floodPct >= 50;
   const poorGovernance = governanceClarity != null && governanceClarity < 40;
   const greenCandidate = treesPct != null && treesPct >= 30 && (governanceClarity == null || governanceClarity >= 60);
 
-  if (poorGovernance && severity >= 40) {
-    typology = 'Governance Fix';
-    rationale = `${governanceClarity}% of residents know who maintains this drain — accountability needs fixing before physical work will stick.`;
+  if (poorGovernance) {
+    category = 'Governance Fix';
+    rationale = `Only ${governanceClarity}% of interviewed residents know who maintains this drain.`;
   } else if (floodDominant) {
-    typology = 'Flood Mitigation';
+    category = 'Flood Mitigation';
     rationale = `${floodPct}% of residents report a history of flooding here.`;
   } else if (wallDominant) {
-    typology = 'Structural Repair';
+    category = 'Structural Repair';
     rationale = `${wallBadPct}% of audited points have a broken or missing retaining wall.`;
   } else if (waterWasteDominant) {
-    typology = 'Water Quality';
-    rationale = `${waterBadPct ?? 0}% contamination, ${wastePct ?? 0}% solid waste present.`;
+    category = 'Water Quality';
+    rationale = `${waterBadPct ?? 0}% water contamination, ${wastePct ?? 0}% solid waste present.`;
   } else if (greenCandidate) {
-    typology = 'Green Retrofit Candidate';
+    category = 'Green Retrofit Candidate';
     rationale = `${treesPct}% of points already have trees and governance is relatively clear — a fit for a Blue-Green public-space upgrade rather than just repair.`;
   } else {
-    typology = 'Monitor';
-    rationale = 'No dominant issue crossed the threshold — keep observing rather than prioritizing now.';
+    category = 'Monitor';
+    rationale = 'No single condition met its threshold — keep observing rather than acting now.';
   }
 
-  return {
-    drain, severity, communityImpact, governanceClarity: governanceClarity ?? 0,
-    typology, rationale, physicalPoints: s.total, interviews: y.n,
-    priorityScore: Math.round((severity + communityImpact + (100 - (governanceClarity ?? 100))) / 3),
-  };
+  return { drain, category, rationale, physicalPoints: s.total, interviews: y.n };
 }
 
 async function main(){
@@ -259,10 +250,7 @@ async function main(){
   seeByDrain = see;
   const rows = Papa.parse(text, { header: false, skipEmptyLines: true }).data.slice(2);
   sayByDrain = buildSayByDrain(rows);
-  priorities = Object.keys(seeByDrain)
-    .map(d => computePriority(d))
-    .filter(Boolean)
-    .sort((a, b) => b.priorityScore - a.priorityScore);
+  categorized = Object.keys(seeByDrain).map(d => computeCategory(d)).filter(Boolean);
 
   interviews = rows.filter(r => {
     const team = (r[COL.team] || '').trim();
@@ -347,18 +335,27 @@ const TYPOLOGY_COLORS = {
   'Water Quality': '#546e7a', 'Green Retrofit Candidate': '#4caf50', 'Monitor': '#999',
 };
 
+const CATEGORY_ORDER = ['Governance Fix', 'Flood Mitigation', 'Structural Repair', 'Water Quality', 'Green Retrofit Candidate', 'Monitor'];
+
 function renderPriorityList(){
   const wrap = document.getElementById('priority-list');
   const itemsEl = document.getElementById('priority-items');
-  if (!priorities.length) return;
+  if (!categorized.length) return;
   wrap.style.display = 'block';
-  itemsEl.innerHTML = priorities.map(p => `
-    <div class="priority-item" data-drain="${p.drain}">
-      <span class="p-drain">${p.drain}</span>
-      <span class="p-type">${p.typology}</span>
-      <span class="p-score" style="color:${TYPOLOGY_COLORS[p.typology]}">${p.priorityScore}</span>
-    </div>
+
+  const groups = {};
+  categorized.forEach(c => { (groups[c.category] || (groups[c.category] = [])).push(c); });
+
+  itemsEl.innerHTML = CATEGORY_ORDER.filter(cat => groups[cat]).map(cat => `
+    <div style="padding:6px 12px 2px;font-size:10px;font-weight:700;color:${TYPOLOGY_COLORS[cat]};
+      text-transform:uppercase;letter-spacing:0.03em;border-top:1px solid #f0f0f0;">${cat}</div>
+    ${groups[cat].map(c => `
+      <div class="priority-item" data-drain="${c.drain}" style="border-top:none;padding:4px 12px 4px 20px;">
+        <span class="p-drain">${c.drain}</span>
+      </div>
+    `).join('')}
   `).join('');
+
   itemsEl.querySelectorAll('.priority-item').forEach(el => {
     el.addEventListener('click', () => {
       const drain = el.dataset.drain;
@@ -425,17 +422,14 @@ function seeSectionHtml(drain){
 }
 
 function prioritySectionHtml(drain){
-  const p = priorities.find(x => x.drain === normDrain(drain));
-  if (!p) return '';
-  const color = TYPOLOGY_COLORS[p.typology];
+  const c = categorized.find(x => x.drain === normDrain(drain));
+  if (!c) return '';
+  const color = TYPOLOGY_COLORS[c.category];
   return `
-    <div class="sec-title">Priority Assessment</div>
-    <span class="typology-badge" style="background:${color}">${p.typology}</span>
-    <div class="stat-line"><span>Priority score</span><span class="v">${p.priorityScore} / 100</span></div>
-    <div class="stat-line"><span>Physical severity</span><span class="v">${p.severity}%</span></div>
-    <div class="stat-line"><span>Community impact</span><span class="v">${p.communityImpact}%</span></div>
-    <div class="stat-line"><span>Governance clarity</span><span class="v">${p.governanceClarity}%</span></div>
-    <div style="font-size:12px;color:#666;margin-top:6px;font-style:italic;">${p.rationale}</div>
+    <div class="sec-title">Candidate Project Category</div>
+    <span class="typology-badge" style="background:${color}">${c.category}</span>
+    <div style="font-size:12px;color:#666;margin-top:2px;">${c.rationale}</div>
+    <div style="font-size:11px;color:#999;margin-top:4px;">Based on ${c.physicalPoints} physical audit points and ${c.interviews} community interviews on this drain.</div>
   `;
 }
 
