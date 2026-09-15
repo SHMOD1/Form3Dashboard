@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Say vs. See — Community Reports vs. Physical Audit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --primary-blue:#0d6aff; --primary-grey:#403c3f; --header:#0d6aff;
+    --bg-light:#f3f4f6; --border-light:#e5e7eb;
+    --say-color:#e05252; --see-color:#4a90d9;
+    --good:#4caf50; --bad:#ef5350; --neutral:#b6b6b6;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Barlow',sans-serif;background:var(--bg-light);color:var(--primary-grey);}
+  header{background:var(--primary-blue);color:#fff;padding:20px 28px;}
+  header h1{margin:0;font-size:20px;text-transform:uppercase;letter-spacing:0.04em;}
+  header p{margin:6px 0 0;font-size:13px;opacity:0.9;max-width:760px;line-height:1.5;}
+  .legend{display:flex;gap:20px;padding:14px 28px;font-size:12px;background:#fff;border-bottom:1px solid var(--border-light);}
+  .legend span{display:flex;align-items:center;gap:6px;}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block;}
+  main{max-width:900px;margin:0 auto;padding:20px 16px 60px;}
+  .drain-card{background:#fff;border:1px solid var(--border-light);border-radius:8px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);}
+  .drain-row{display:flex;align-items:center;gap:16px;padding:14px 18px;cursor:pointer;}
+  .drain-row:hover{background:#fafbfc;}
+  .rank{font-size:13px;font-weight:700;color:#aaa;width:22px;flex-shrink:0;}
+  .drain-id{font-weight:700;font-size:15px;color:var(--header);width:70px;flex-shrink:0;}
+  .bar-group{flex:1;display:flex;flex-direction:column;gap:5px;min-width:0;}
+  .bar-row{display:flex;align-items:center;gap:8px;font-size:11px;}
+  .bar-label{width:36px;flex-shrink:0;font-weight:600;}
+  .bar-track{flex:1;background:#eee;border-radius:3px;height:9px;overflow:hidden;}
+  .bar-fill{height:100%;border-radius:3px;}
+  .bar-val{width:32px;text-align:right;flex-shrink:0;color:#777;}
+  .mismatch-badge{flex-shrink:0;width:64px;text-align:center;font-weight:700;font-size:13px;padding:5px 8px;border-radius:6px;}
+  .mismatch-hi{background:#fdecea;color:#c0392b;}
+  .mismatch-mid{background:#fff8e1;color:#9a7d0a;}
+  .mismatch-lo{background:#eaf6ec;color:#2e7d32;}
+  .chevron{width:16px;flex-shrink:0;color:#999;transition:transform 0.15s;}
+  .drain-row.open .chevron{transform:rotate(90deg);}
+  .drain-detail{display:none;border-top:1px solid var(--border-light);padding:18px;}
+  .drain-detail.open{display:block;}
+  .detail-cols{display:flex;gap:24px;flex-wrap:wrap;}
+  .detail-col{flex:1;min-width:260px;}
+  .detail-col h3{font-size:12px;text-transform:uppercase;letter-spacing:0.04em;margin:0 0 10px;color:#888;}
+  .stat-line{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed #eee;}
+  .stat-line .v{font-weight:700;}
+  .quotes{margin-top:14px;}
+  .quote{background:#f8f9fb;border-left:3px solid var(--say-color);padding:8px 12px;font-size:12.5px;font-style:italic;margin-bottom:8px;border-radius:0 4px 4px 0;}
+  .quote .who{display:block;font-style:normal;font-weight:600;font-size:11px;margin-top:4px;color:#555;}
+  .audio-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;}
+  .audio-item{display:flex;align-items:center;gap:10px;background:#f8f9fb;padding:6px 10px;border-radius:6px;}
+  .audio-item span{font-size:11.5px;font-weight:600;flex-shrink:0;width:120px;}
+  .audio-item audio{flex:1;height:32px;}
+  .no-audio{font-size:12px;color:#999;font-style:italic;}
+  #status{padding:40px;text-align:center;color:#888;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Say vs. See</h1>
+  <p>Comparing what residents reported in community interviews (Form 3) against what field auditors physically measured
+     (Form 1 &amp; 2), per drain. Drains are ranked by the size of the gap between the two, in either direction —
+     residents reporting more distress than the physical audit shows, or a physically severe drain that residents
+     aren't flagging as a problem. Both kinds of gaps are worth investigating further.</p>
+</header>
+<div class="legend">
+  <span><span class="dot" style="background:var(--say-color)"></span> SAY — resident reports</span>
+  <span><span class="dot" style="background:var(--see-color)"></span> SEE — physical audit</span>
+</div>
+<main>
+  <div id="status">Loading data…</div>
+  <div id="list"></div>
+</main>
+
+<script>
+const DRAIN_ALIASES = { 'K200':'K200' }; // room for future normalization
+
+function pct(n, d){ return d > 0 ? Math.round((n / d) * 100) : null; }
+
+function normDrain(v){
+  if (!v) return null;
+  return String(v).trim().toUpperCase();
+}
+
+async function loadCsvRows(path){
+  const text = await fetch(path).then(r => r.text());
+  return Papa.parse(text, { header: true, skipEmptyLines: true }).data.slice(1);
+}
+
+async function loadForm3Raw(){
+  const text = await fetch('data/csv/form-3.csv').then(r => r.text());
+  const parsed = Papa.parse(text, { header: false, skipEmptyLines: true }).data;
+  return parsed.slice(2); // skip field-code row + label row
+}
+
+const WALL_GOOD = v => /intact/i.test(v || '');
+const WATER_BAD = v => /black|grey|solid particles|oily|froth|foam/i.test(v || '');
+const SEVERE_HEIGHT = v => /more than 10|6-10/i.test(v || '');
+
+async function main(){
+  const [f1, f2, f3rows] = await Promise.all([
+    loadCsvRows('data/csv/form-1.csv'),
+    loadCsvRows('data/csv/form-2.csv'),
+    loadForm3Raw(),
+  ]);
+
+  const f2ByIndex = new Map(f2.map(r => [r._index_f1, r]));
+
+  // ---- SEE aggregation (per drain) ----
+  const see = {}; // drain -> {wallBad, wallTotal, waterBad, waterTotal, wasteBad, wasteTotal}
+  for (const r of f1) {
+    const drain = normDrain(r._drain);
+    if (!drain) continue;
+    const f2row = f2ByIndex.get(r._index) || {};
+    const s = see[drain] || (see[drain] = { wallBad:0, wallTotal:0, waterBad:0, waterTotal:0, wasteBad:0, wasteTotal:0 });
+    if (r.wall_condition) { s.wallTotal++; if (!WALL_GOOD(r.wall_condition)) s.wallBad++; }
+    if (f2row.water_contamination) { s.waterTotal++; if (WATER_BAD(f2row.water_contamination)) s.waterBad++; }
+    if (f2row.sw_inside) { s.wasteTotal++; if (/^yes$/i.test((f2row.sw_inside||'').trim())) s.wasteBad++; }
+  }
+
+  // ---- SAY aggregation (per drain), from raw form-3.csv by column index ----
+  const COL = { drain:6, name:16, flood_history:18, flood_height:22, last_flooded:25,
+                maintenance:31, activities:32, health:33, other_info:35, audio:37, uuid:41 };
+  const say = {}; // drain -> {floodYes, floodTotal, healthYes, healthTotal, severeYes, severeTotal, maintKnown, maintTotal, interviews:[]}
+  for (const row of f3rows) {
+    const teamCode = (row[5] || '').trim();
+    if (/^test$/i.test(teamCode)) continue;
+    let drain = normDrain(row[COL.drain]);
+    if (!drain || drain === '2' || drain === '4' || drain === 'ABCD') continue;
+    const s = say[drain] || (say[drain] = { floodYes:0, floodTotal:0, healthYes:0, healthTotal:0,
+                                             severeYes:0, severeTotal:0, maintKnown:0, maintTotal:0, interviews:[] });
+    const fh = row[COL.flood_history];
+    if (fh) { s.floodTotal++; if (/^yes$/i.test(fh.trim())) s.floodYes++; }
+    const hp = row[COL.health];
+    if (hp) { s.healthTotal++; if (/^yes/i.test(hp.trim())) s.healthYes++; }
+    const height = row[COL.flood_height];
+    if (height) { s.severeTotal++; if (SEVERE_HEIGHT(height)) s.severeYes++; }
+    const maint = row[COL.maintenance];
+    if (maint) { s.maintTotal++; if (!/do not know|^$/i.test(maint.trim())) s.maintKnown++; }
+
+    const uuid = (row[COL.uuid] || '').trim();
+    const audioFile = (row[COL.audio] || '').trim();
+    s.interviews.push({
+      name: (row[COL.name] || 'Anonymous').trim(),
+      floodHistory: fh, floodHeight: height, health: hp, maintenance: maint,
+      otherInfo: (row[COL.other_info] || '').trim(),
+      audioSrc: uuid && audioFile ? `data/media/form-3/audio/${uuid}/${audioFile}` : null,
+    });
+  }
+
+  // ---- combine, score, rank ----
+  const drains = Object.keys(say).filter(d => see[d]); // only drains with both datasets
+  const records = drains.map(drain => {
+    const s = see[drain], y = say[drain];
+    const seeParts = [pct(s.wallBad, s.wallTotal), pct(s.waterBad, s.waterTotal), pct(s.wasteBad, s.wasteTotal)].filter(v => v != null);
+    const sayParts = [pct(y.floodYes, y.floodTotal), pct(y.healthYes, y.healthTotal), pct(y.severeYes, y.severeTotal)].filter(v => v != null);
+    const seeScore = seeParts.length ? Math.round(seeParts.reduce((a,b)=>a+b,0) / seeParts.length) : 0;
+    const sayScore = sayParts.length ? Math.round(sayParts.reduce((a,b)=>a+b,0) / sayParts.length) : 0;
+    return {
+      drain, see: s, say: y, seeScore, sayScore, mismatch: sayScore - seeScore,
+      wallBadPct: pct(s.wallBad, s.wallTotal), waterBadPct: pct(s.waterBad, s.waterTotal), wasteBadPct: pct(s.wasteBad, s.wasteTotal),
+      floodPct: pct(y.floodYes, y.floodTotal), healthPct: pct(y.healthYes, y.healthTotal), severePct: pct(y.severeYes, y.severeTotal),
+      maintPct: pct(y.maintKnown, y.maintTotal),
+    };
+  }).sort((a, b) => Math.abs(b.mismatch) - Math.abs(a.mismatch));
+
+  document.getElementById('status').style.display = 'none';
+  const list = document.getElementById('list');
+
+  records.forEach((rec, i) => {
+    const card = document.createElement('div');
+    card.className = 'drain-card';
+
+    const absMismatch = Math.abs(rec.mismatch);
+    const mismatchClass = absMismatch >= 30 ? 'mismatch-hi' : absMismatch >= 10 ? 'mismatch-mid' : 'mismatch-lo';
+    const sign = rec.mismatch > 0 ? '+' : '';
+
+    const row = document.createElement('div');
+    row.className = 'drain-row';
+    row.innerHTML = `
+      <div class="rank">#${i+1}</div>
+      <div class="drain-id">${rec.drain}</div>
+      <div class="bar-group">
+        <div class="bar-row"><span class="bar-label" style="color:var(--say-color)">SAY</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${rec.sayScore}%;background:var(--say-color)"></div></div>
+          <span class="bar-val">${rec.sayScore}%</span></div>
+        <div class="bar-row"><span class="bar-label" style="color:var(--see-color)">SEE</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${rec.seeScore}%;background:var(--see-color)"></div></div>
+          <span class="bar-val">${rec.seeScore}%</span></div>
+      </div>
+      <div class="mismatch-badge ${mismatchClass}">${sign}${rec.mismatch}<br><span style="font-size:9px;font-weight:600;">${rec.mismatch > 0 ? 'SAY &gt; SEE' : rec.mismatch < 0 ? 'SEE &gt; SAY' : 'MATCH'}</span></div>
+      <div class="chevron">▶</div>
+    `;
+
+    const detail = document.createElement('div');
+    detail.className = 'drain-detail';
+    const audioHtml = rec.say.interviews.filter(iv => iv.audioSrc).map(iv => `
+      <div class="audio-item">
+        <span>${iv.name}</span>
+        <audio controls src="${iv.audioSrc}"></audio>
+      </div>
+    `).join('') || '<div class="no-audio">No recorded audio for this drain (consent not given).</div>';
+
+    const quotesHtml = rec.say.interviews.filter(iv => iv.otherInfo && !/^not applicable$/i.test(iv.otherInfo) && !/^no\.?$/i.test(iv.otherInfo)).slice(0,3).map(iv => `
+      <div class="quote">“${iv.otherInfo}”<span class="who">— ${iv.name}</span></div>
+    `).join('');
+
+    detail.innerHTML = `
+      <div class="detail-cols">
+        <div class="detail-col">
+          <h3>See — Physical Audit (${rec.see.wallTotal || rec.see.waterTotal || rec.see.wasteTotal} points)</h3>
+          <div class="stat-line"><span>Wall broken / does not exist</span><span class="v">${rec.wallBadPct ?? '—'}%</span></div>
+          <div class="stat-line"><span>Water contaminated</span><span class="v">${rec.waterBadPct ?? '—'}%</span></div>
+          <div class="stat-line"><span>Solid waste present</span><span class="v">${rec.wasteBadPct ?? '—'}%</span></div>
+        </div>
+        <div class="detail-col">
+          <h3>Say — Community Reports (${rec.say.interviews.length} interviews)</h3>
+          <div class="stat-line"><span>Report flooding history</span><span class="v">${rec.floodPct ?? '—'}%</span></div>
+          <div class="stat-line"><span>Report health impact</span><span class="v">${rec.healthPct ?? '—'}%</span></div>
+          <div class="stat-line"><span>Report severe flood height (6"+)</span><span class="v">${rec.severePct ?? '—'}%</span></div>
+          <div class="stat-line"><span>Know who maintains the drain</span><span class="v">${rec.maintPct ?? '—'}%</span></div>
+          ${quotesHtml ? `<div class="quotes">${quotesHtml}</div>` : ''}
+        </div>
+      </div>
+      <h3 style="margin-top:16px;">Interview Audio</h3>
+      <div class="audio-list">${audioHtml}</div>
+    `;
+
+    row.addEventListener('click', () => {
+      row.classList.toggle('open');
+      detail.classList.toggle('open');
+    });
+
+    card.appendChild(row);
+    card.appendChild(detail);
+    list.appendChild(card);
+  });
+}
+
+main().catch(err => {
+  document.getElementById('status').textContent = 'Error loading data: ' + err.message;
+  console.error(err);
+});
+</script>
+</body>
+</html>
