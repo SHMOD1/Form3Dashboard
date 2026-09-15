@@ -24,6 +24,15 @@
   #legend .row{display:flex;align-items:center;gap:8px;margin:3px 0;}
   #legend .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
 
+  .priority-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;
+    border-top:1px solid #f0f0f0;font-size:12px;}
+  .priority-item:hover{background:#f5f8ff;}
+  .priority-item .p-drain{font-weight:700;width:44px;flex-shrink:0;color:var(--primary-blue);}
+  .priority-item .p-type{flex:1;font-size:10.5px;color:#666;}
+  .priority-item .p-score{font-weight:700;font-size:11px;flex-shrink:0;}
+  .typology-badge{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;
+    border-radius:10px;color:#fff;margin-bottom:8px;}
+
   #panel{position:absolute;top:0;right:0;bottom:0;width:380px;background:#fff;
     box-shadow:-2px 0 12px rgba(0,0,0,0.15);z-index:6;transform:translateX(100%);
     transition:transform 0.2s ease;overflow-y:auto;padding:20px;}
@@ -59,6 +68,14 @@
 </div>
 
 <div id="count-badge" style="display:none"></div>
+
+<div id="priority-list" style="display:none;position:absolute;top:118px;left:16px;width:230px;
+     background:rgba(255,255,255,0.97);border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.12);
+     z-index:5;overflow:hidden;">
+  <h2 style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:#888;padding:10px 12px 6px;">
+    Candidate Projects (ranked)</h2>
+  <div id="priority-items"></div>
+</div>
 
 <div id="legend">
   <div class="row"><span class="dot" style="background:var(--yes)"></span> Reports flooding history</div>
@@ -133,13 +150,14 @@ async function buildSeeByDrain(){
     const f2row = f2ByIndex.get(r._index) || {};
     const s = see[drain] || (see[drain] = {
       wallCounts: {}, waterCounts: {}, wasteYes: 0, wasteNo: 0, wasteCannotSee: 0, total: 0,
-      wallPhoto: null, waterPhoto: null, wastePhoto: null,
+      wallPhoto: null, waterPhoto: null, wastePhoto: null, treesYes: 0, treesTotal: 0,
     });
     s.total++;
     if (r.wall_condition) {
       const label = WALL_GOOD(r.wall_condition) ? 'Intact' : /does not exist|no retaining wall/i.test(r.wall_condition) ? 'Does not exist' : 'Broken';
       s.wallCounts[label] = (s.wallCounts[label] || 0) + 1;
     }
+    if (r.trees) { s.treesTotal++; if (/^yes$/i.test(r.trees.trim())) s.treesYes++; }
     if (!s.wallPhoto && r.wall_pic && r._rootUuid) s.wallPhoto = picUrl(r.wall_pic, r._rootUuid, 1);
     if (f2row.water_contamination) {
       const label = WATER_BAD(f2row.water_contamination) ? 'Contaminated' : /cannot see/i.test(f2row.water_contamination) ? 'Cannot see' : 'Clear';
@@ -155,6 +173,80 @@ async function buildSeeByDrain(){
   return see;
 }
 
+function buildSayByDrain(allRows){
+  const say = {};
+  for (const row of allRows) {
+    const team = (row[COL.team] || '').trim();
+    if (/^test$/i.test(team)) continue;
+    const drain = normDrain(row[COL.drain]);
+    if (!drain || drain === '2' || drain === '4' || drain === 'ABCD') continue;
+    const s = say[drain] || (say[drain] = { floodYes:0, floodTotal:0, healthYes:0, healthTotal:0, maintKnown:0, maintTotal:0, n:0 });
+    s.n++;
+    const fh = row[COL.flood_history];
+    if (fh) { s.floodTotal++; if (/^yes$/i.test(fh.trim())) s.floodYes++; }
+    const hp = row[COL.health];
+    if (hp) { s.healthTotal++; if (/^yes/i.test(hp.trim())) s.healthYes++; }
+    const maint = row[COL.maintenance];
+    if (maint) { s.maintTotal++; if (!/do not know|^$/i.test(maint.trim())) s.maintKnown++; }
+  }
+  return say;
+}
+
+let sayByDrain = {};
+let priorities = [];
+
+function computePriority(drain){
+  const s = seeByDrain[drain], y = sayByDrain[drain];
+  if (!s || !y) return null;
+
+  const wallBadPct = pct((s.wallCounts['Broken']||0) + (s.wallCounts['Does not exist']||0), s.total);
+  const waterBadPct = pct(s.waterCounts['Contaminated']||0, s.total);
+  const wastePct = pct(s.wasteYes, s.total);
+  const treesPct = pct(s.treesYes, s.treesTotal);
+
+  const severity = Math.round(([wallBadPct, waterBadPct, wastePct].filter(v => v != null)
+    .reduce((a,b)=>a+b,0)) / [wallBadPct, waterBadPct, wastePct].filter(v => v != null).length || 0);
+  const floodPct = pct(y.floodYes, y.floodTotal);
+  const healthPct = pct(y.healthYes, y.healthTotal);
+  const communityImpact = Math.round(([floodPct, healthPct].filter(v => v != null)
+    .reduce((a,b)=>a+b,0)) / [floodPct, healthPct].filter(v => v != null).length || 0);
+  const governanceClarity = pct(y.maintKnown, y.maintTotal);
+
+  // Typology: pick the single most actionable label for this drain
+  let typology, rationale;
+  const wallDominant = wallBadPct != null && wallBadPct >= 40;
+  const waterWasteDominant = (waterBadPct != null && waterBadPct >= 60) || (wastePct != null && wastePct >= 60);
+  const floodDominant = floodPct != null && floodPct >= 50;
+  const poorGovernance = governanceClarity != null && governanceClarity < 40;
+  const greenCandidate = treesPct != null && treesPct >= 30 && (governanceClarity == null || governanceClarity >= 60);
+
+  if (poorGovernance && severity >= 40) {
+    typology = 'Governance Fix';
+    rationale = `${governanceClarity}% of residents know who maintains this drain — accountability needs fixing before physical work will stick.`;
+  } else if (floodDominant) {
+    typology = 'Flood Mitigation';
+    rationale = `${floodPct}% of residents report a history of flooding here.`;
+  } else if (wallDominant) {
+    typology = 'Structural Repair';
+    rationale = `${wallBadPct}% of audited points have a broken or missing retaining wall.`;
+  } else if (waterWasteDominant) {
+    typology = 'Water Quality';
+    rationale = `${waterBadPct ?? 0}% contamination, ${wastePct ?? 0}% solid waste present.`;
+  } else if (greenCandidate) {
+    typology = 'Green Retrofit Candidate';
+    rationale = `${treesPct}% of points already have trees and governance is relatively clear — a fit for a Blue-Green public-space upgrade rather than just repair.`;
+  } else {
+    typology = 'Monitor';
+    rationale = 'No dominant issue crossed the threshold — keep observing rather than prioritizing now.';
+  }
+
+  return {
+    drain, severity, communityImpact, governanceClarity: governanceClarity ?? 0,
+    typology, rationale, physicalPoints: s.total, interviews: y.n,
+    priorityScore: Math.round((severity + communityImpact + (100 - (governanceClarity ?? 100))) / 3),
+  };
+}
+
 async function main(){
   const [text, primary, secondary, gbaBoundary, valley, see] = await Promise.all([
     fetch('data/csv/form-3.csv').then(r => r.text()),
@@ -166,6 +258,11 @@ async function main(){
   ]);
   seeByDrain = see;
   const rows = Papa.parse(text, { header: false, skipEmptyLines: true }).data.slice(2);
+  sayByDrain = buildSayByDrain(rows);
+  priorities = Object.keys(seeByDrain)
+    .map(d => computePriority(d))
+    .filter(Boolean)
+    .sort((a, b) => b.priorityScore - a.priorityScore);
 
   interviews = rows.filter(r => {
     const team = (r[COL.team] || '').trim();
@@ -241,6 +338,36 @@ async function main(){
     map.on('mouseleave', 'interview-points', () => { map.getCanvas().style.cursor = ''; });
 
     document.getElementById('status').style.display = 'none';
+    renderPriorityList();
+  });
+}
+
+const TYPOLOGY_COLORS = {
+  'Governance Fix': '#8e44ad', 'Flood Mitigation': '#e05252', 'Structural Repair': '#e67e22',
+  'Water Quality': '#546e7a', 'Green Retrofit Candidate': '#4caf50', 'Monitor': '#999',
+};
+
+function renderPriorityList(){
+  const wrap = document.getElementById('priority-list');
+  const itemsEl = document.getElementById('priority-items');
+  if (!priorities.length) return;
+  wrap.style.display = 'block';
+  itemsEl.innerHTML = priorities.map(p => `
+    <div class="priority-item" data-drain="${p.drain}">
+      <span class="p-drain">${p.drain}</span>
+      <span class="p-type">${p.typology}</span>
+      <span class="p-score" style="color:${TYPOLOGY_COLORS[p.typology]}">${p.priorityScore}</span>
+    </div>
+  `).join('');
+  itemsEl.querySelectorAll('.priority-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const drain = el.dataset.drain;
+      const iv = interviews.find(i => normDrain(i.drain) === drain);
+      if (iv) {
+        map.flyTo({ center: [iv.lng, iv.lat], zoom: 13 });
+        openPanel(iv);
+      }
+    });
   });
 }
 
@@ -297,6 +424,21 @@ function seeSectionHtml(drain){
   `;
 }
 
+function prioritySectionHtml(drain){
+  const p = priorities.find(x => x.drain === normDrain(drain));
+  if (!p) return '';
+  const color = TYPOLOGY_COLORS[p.typology];
+  return `
+    <div class="sec-title">Priority Assessment</div>
+    <span class="typology-badge" style="background:${color}">${p.typology}</span>
+    <div class="stat-line"><span>Priority score</span><span class="v">${p.priorityScore} / 100</span></div>
+    <div class="stat-line"><span>Physical severity</span><span class="v">${p.severity}%</span></div>
+    <div class="stat-line"><span>Community impact</span><span class="v">${p.communityImpact}%</span></div>
+    <div class="stat-line"><span>Governance clarity</span><span class="v">${p.governanceClarity}%</span></div>
+    <div style="font-size:12px;color:#666;margin-top:6px;font-style:italic;">${p.rationale}</div>
+  `;
+}
+
 function openPanel(iv){
   const floodLine = iv.floodHistory
     ? `${iv.floodHistory}${iv.floodHeight ? ' — ' + iv.floodHeight : ''}${iv.lastFlooded ? ' (last: ' + iv.lastFlooded + ')' : ''}`
@@ -306,6 +448,7 @@ function openPanel(iv){
     <h2>${iv.name}</h2>
     <div class="sub">Drain ${iv.drain || '—'} · Lived here ${iv.livedYears || '—'} years</div>
 
+    ${prioritySectionHtml(iv.drain)}
     ${seeSectionHtml(iv.drain)}
 
     <div class="sec-title">Flooding</div>
