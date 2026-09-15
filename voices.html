@@ -77,9 +77,11 @@ const map = new maplibregl.Map({
   style: {
     version: 8,
     sources: { carto: { type: 'raster',
-      tiles: ['https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png',
-              'https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png',
-              'https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png'],
+      tiles: [
+        'https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
+        'https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
+        'https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
+      ],
       tileSize: 256, attribution: '© OpenStreetMap contributors © CARTO' } },
     layers: [{ id: 'carto', type: 'raster', source: 'carto' }],
   },
