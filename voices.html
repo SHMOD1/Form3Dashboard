@@ -116,6 +116,13 @@ const WATER_BAD = v => /black|grey|solid particles|oily|froth|foam/i.test(v || '
 
 let seeByDrain = {};
 
+const R2_BASE = 'https://pub-1f4352e1c46a4c7595cb251a346eadd4.r2.dev';
+function picUrl(filename, rootUuid, formNum){
+  if (!filename || !rootUuid) return null;
+  const cleanUuid = rootUuid.replace('uuid:', '');
+  return `${R2_BASE}/form-${formNum}/images/${cleanUuid}/${filename}`;
+}
+
 async function buildSeeByDrain(){
   const [f1, f2] = await Promise.all([loadCsvRows('data/csv/form-1.csv'), loadCsvRows('data/csv/form-2.csv')]);
   const f2ByIndex = new Map(f2.map(r => [r._index_f1, r]));
@@ -126,20 +133,24 @@ async function buildSeeByDrain(){
     const f2row = f2ByIndex.get(r._index) || {};
     const s = see[drain] || (see[drain] = {
       wallCounts: {}, waterCounts: {}, wasteYes: 0, wasteNo: 0, wasteCannotSee: 0, total: 0,
+      wallPhoto: null, waterPhoto: null, wastePhoto: null,
     });
     s.total++;
     if (r.wall_condition) {
       const label = WALL_GOOD(r.wall_condition) ? 'Intact' : /does not exist|no retaining wall/i.test(r.wall_condition) ? 'Does not exist' : 'Broken';
       s.wallCounts[label] = (s.wallCounts[label] || 0) + 1;
     }
+    if (!s.wallPhoto && r.wall_pic && r._rootUuid) s.wallPhoto = picUrl(r.wall_pic, r._rootUuid, 1);
     if (f2row.water_contamination) {
       const label = WATER_BAD(f2row.water_contamination) ? 'Contaminated' : /cannot see/i.test(f2row.water_contamination) ? 'Cannot see' : 'Clear';
       s.waterCounts[label] = (s.waterCounts[label] || 0) + 1;
     }
+    if (!s.waterPhoto && f2row.water_pic && f2row._rootUuid) s.waterPhoto = picUrl(f2row.water_pic, f2row._rootUuid, 2);
     const swi = (f2row.sw_inside || '').trim().toLowerCase();
     if (swi === 'yes') s.wasteYes++;
     else if (swi === 'no') s.wasteNo++;
     else if (swi === 'cannot see') s.wasteCannotSee++;
+    if (!s.wastePhoto && f2row.sw_inside_pic && f2row._rootUuid) s.wastePhoto = picUrl(f2row.sw_inside_pic, f2row._rootUuid, 2);
   }
   return see;
 }
@@ -267,8 +278,16 @@ function seeSectionHtml(drain){
       <div style="font-size:12px;color:#999;font-style:italic;">No physical audit points recorded for this drain.</div>`;
   }
   const wasteCounts = { 'Yes': s.wasteYes, 'No': s.wasteNo, 'Cannot see': s.wasteCannotSee };
+  const photoRow = (label, src) => src
+    ? `<div style="flex:1;min-width:0;"><img src="${src}" style="width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:6px;display:block;" alt="${label}" loading="lazy"><div style="font-size:10px;color:#999;text-align:center;margin-top:2px;">${label}</div></div>`
+    : `<div style="flex:1;min-width:0;background:#eee;aspect-ratio:3/4;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#aaa;">No photo</div>`;
   return `
     <div class="sec-title">Physical Audit (Form 1 &amp; 2) — ${s.total} points on this drain</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      ${photoRow('Wall', s.wallPhoto)}
+      ${photoRow('Water', s.waterPhoto)}
+      ${photoRow('Waste', s.wastePhoto)}
+    </div>
     <div style="font-size:11px;font-weight:600;color:#888;margin:8px 0 2px;">Wall condition</div>
     ${breakdownBars(s.wallCounts, s.total, WALL_COLORS)}
     <div style="font-size:11px;font-weight:600;color:#888;margin:10px 0 2px;">Water contamination</div>
