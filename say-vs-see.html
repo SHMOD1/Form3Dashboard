@@ -141,7 +141,7 @@ async function main(){
     if (maint) { s.maintTotal++; if (!/do not know|^$/i.test(maint.trim())) s.maintKnown++; }
 
     const uuid = (row[COL.uuid] || '').trim();
-    const audioFile = (row[COL.audio] || '').trim();
+    const audioFile = (row[COL.audio] || '').trim().replace(/\.amr$/i, '.mp3');
     s.interviews.push({
       name: (row[COL.name] || 'Anonymous').trim(),
       floodHistory: fh, floodHeight: height, health: hp, maintenance: maint,

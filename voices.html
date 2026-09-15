@@ -136,7 +136,7 @@ async function main(){
     otherInfo: (r[COL.other_info] || '').trim(),
     audioSrc: (() => {
       const uuid = (r[COL.uuid] || '').trim();
-      const audioFile = (r[COL.audio] || '').trim();
+      const audioFile = (r[COL.audio] || '').trim().replace(/\.amr$/i, '.mp3');
       return uuid && audioFile ? `data/media/form-3/audio/${uuid}/${audioFile}` : null;
     })(),
   })).filter(iv => !isNaN(iv.lat) && !isNaN(iv.lng));
