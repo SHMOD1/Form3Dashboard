@@ -78,9 +78,9 @@ const map = new maplibregl.Map({
     version: 8,
     sources: { carto: { type: 'raster',
       tiles: [
-        'https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
-        'https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
-        'https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
+        'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
+        'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
+        'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png?key=cb1_2a9g_1_a444340f13f67a89bdd2599c',
       ],
       tileSize: 256, attribution: '© OpenStreetMap contributors © CARTO' } },
     layers: [{ id: 'carto', type: 'raster', source: 'carto' }],
@@ -105,7 +105,13 @@ const COLORS = { 'yes-color':'#e05252', 'no-color':'#4caf50', 'unknown-color':'#
 let interviews = [];
 
 async function main(){
-  const text = await fetch('data/csv/form-3.csv').then(r => r.text());
+  const [text, primary, secondary, gbaBoundary, valley] = await Promise.all([
+    fetch('data/csv/form-3.csv').then(r => r.text()),
+    fetch('data/json/primarydrains.geojson').then(r => r.json()),
+    fetch('data/json/secondarydrains.geojson').then(r => r.json()),
+    fetch('data/json/gba_boundary.geojson').then(r => r.json()),
+    fetch('data/json/valley.geojson').then(r => r.json()),
+  ]);
   const rows = Papa.parse(text, { header: false, skipEmptyLines: true }).data.slice(2);
 
   interviews = rows.filter(r => {
@@ -148,6 +154,22 @@ async function main(){
   };
 
   map.on('load', () => {
+    map.addSource('valley', { type: 'geojson', data: valley });
+    map.addLayer({ id: 'valley-fill', type: 'line', source: 'valley',
+      paint: { 'line-color': '#8a4343', 'line-width': 0.5, 'line-opacity': 0.3 } });
+
+    map.addSource('gba-boundary', { type: 'geojson', data: gbaBoundary });
+    map.addLayer({ id: 'gba-boundary-line', type: 'line', source: 'gba-boundary',
+      paint: { 'line-color': '#575757', 'line-width': 1, 'line-opacity': 0.8 } });
+
+    map.addSource('primary', { type: 'geojson', data: primary });
+    map.addLayer({ id: 'primary-line', type: 'line', source: 'primary',
+      paint: { 'line-color': '#0d6aff', 'line-width': 1.5, 'line-opacity': 0.7 } });
+
+    map.addSource('secondary', { type: 'geojson', data: secondary });
+    map.addLayer({ id: 'secondary-line', type: 'line', source: 'secondary',
+      paint: { 'line-color': '#0d6aff', 'line-width': 1, 'line-opacity': 0.5 } });
+
     map.addSource('interviews', { type: 'geojson', data: geojson });
     map.addLayer({
       id: 'interview-points', type: 'circle', source: 'interviews',
